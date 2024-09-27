@@ -292,6 +292,82 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  Future<bool> _executeCommand(String command) async {
+    try {
+      final result = await Process.run('sh', ['-c', command]);
+      print('Command: $command');
+      print('Exit code: ${result.exitCode}');
+      print('Stdout: ${result.stdout}');
+      print('Stderr: ${result.stderr}');
+      return result.exitCode == 0;
+    } catch (e) {
+      print('Error executing command: $e');
+      return false;
+    }
+  }
+
+  void _burnToDisk() async {
+    if (_selectedDrive == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Please select a drive first.')),
+      );
+      return;
+    }
+
+    bool confirm = await showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Confirmation'),
+          content: Text('Are you sure you want to write/modify the selected disk? This action cannot be undone.'),
+          actions: <Widget>[
+            TextButton(
+              child: Text('No'),
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+            ),
+            TextButton(
+              child: Text('Yes'),
+              onPressed: () {
+                Navigator.of(context).pop(true);
+              },
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm) {
+      List<String> messages = [];
+
+      if (_isBootImageEnabled) {
+        bool success = await _executeCommand('dd if=${_bootImageController.text} of=$_selectedDrive bs=4M');
+        messages.add('Writing boot image: ${success ? 'Success' : 'Failed'}');
+      }
+
+      if (_isSystemImageEnabled) {
+        bool success = await _executeCommand('dd if=${_systemImageController.text} of=$_selectedDrive bs=4M');
+        messages.add('Writing system image: ${success ? 'Success' : 'Failed'}');
+      }
+
+      if (_isVendorImageEnabled) {
+        bool success = await _executeCommand('dd if=${_vendorImageController.text} of=$_selectedDrive bs=4M');
+        messages.add('Writing vendor image: ${success ? 'Success' : 'Failed'}');
+      }
+
+      if (_createUserPartition) {
+        // This is a placeholder command. Replace with actual command to create a user partition
+        bool success = await _executeCommand('parted $_selectedDrive mkpart primary ext4 100% 100%');
+        messages.add('Creating user partition: ${success ? 'Success' : 'Failed'}');
+      }
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(messages.join('\n'))),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -332,6 +408,14 @@ class _HomePageState extends State<HomePage> {
                 ),
                 Text('Create user partition?'),
               ],
+            ),
+            Spacer(),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: ElevatedButton(
+                onPressed: _selectedDrive != null ? _burnToDisk : null,
+                child: Text('Burn to disk'),
+              ),
             ),
           ],
         ),
