@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+late SharedPreferences prefs;
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  prefs = await SharedPreferences.getInstance();
   runApp(const MyApp());
 }
 
@@ -37,26 +42,41 @@ class _HomePageState extends State<HomePage> {
   bool _isVendorImageEnabled = true;
   bool _createUserPartition = false;
 
+  String? _lastKnownDirectory;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastKnownDirectory();
+  }
+
+  Future<void> _loadLastKnownDirectory() async {
+    _lastKnownDirectory = prefs.getString('last_known_directory');
+  }
+
   Future<void> _selectFile(TextEditingController controller) async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['img'],
+      initialDirectory: _lastKnownDirectory,
     );
 
     if (result != null) {
+      String filePath = result.files.single.path!;
       setState(() {
-        controller.text = result.files.single.path!;
+        controller.text = filePath;
       });
+
+      // Save the last known directory
+      String directory = filePath.substring(0, filePath.lastIndexOf('/'));
+      await prefs.setString('last_known_directory', directory);
+      _lastKnownDirectory = directory;
     }
   }
 
-  Widget _buildImageField(String label, TextEditingController controller, bool isEnabled, Function(bool?) onCheckboxChanged) {
+  Widget _buildImageField(String label, TextEditingController controller, bool isEnabled, Function(bool?) onChanged) {
     return Row(
       children: [
-        Checkbox(
-          value: isEnabled,
-          onChanged: onCheckboxChanged,
-        ),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
