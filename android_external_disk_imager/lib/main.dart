@@ -4,12 +4,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 late SharedPreferences prefs;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   prefs = await SharedPreferences.getInstance();
+
   runApp(const MyApp());
 }
 
@@ -20,14 +22,16 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Android External Disk Imager',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
+      themeMode: ThemeMode.system,
+      theme: ThemeData.light().copyWith(
+        primaryColor: Colors.blue,
+        colorScheme: const ColorScheme.light(primary: Colors.blue),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.blue,
             foregroundColor: Colors.white,
-            padding: EdgeInsets.symmetric(vertical: 15, horizontal: 20),
-            textStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+            textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             elevation: 5,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
@@ -35,21 +39,35 @@ class MyApp extends StatelessWidget {
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(),
+          border: const OutlineInputBorder(),
           filled: true,
           fillColor: Colors.grey[200],
-          contentPadding: EdgeInsets.symmetric(vertical: 15, horizontal: 15),
+          contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 15),
         ),
       ),
-      home: LayoutBuilder(
-        builder: (context, constraints) {
-          return SizedBox(
-            width: constraints.maxWidth,
-            height: constraints.maxHeight + 200, // Increase height by 200 pixels
-            child: const HomePage(),
-          );
-        },
+      darkTheme: ThemeData.dark().copyWith(
+        primaryColor: Colors.blue,
+        colorScheme: const ColorScheme.dark(primary: Colors.blue),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+            textStyle: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            elevation: 5,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: const OutlineInputBorder(),
+          filled: true,
+          fillColor: Colors.grey[800],
+          contentPadding: const EdgeInsets.symmetric(vertical: 15, horizontal: 15),
+        ),
       ),
+      home: const HomePage(),
     );
   }
 }
@@ -79,12 +97,12 @@ class _HomePageState extends State<HomePage> {
   bool _isSystemImageEnabled = true;
   bool _isVendorImageEnabled = true;
   bool _formatUserPartition = false;
-  bool _showPersistentMessages = false; // Always initialized to false
+  bool _showPersistentMessages = false;
   bool _isOperationInProgress = false;
 
   String? _lastKnownDirectory;
   String? _selectedDrive;
-  List<ColoredMessage> _persistentMessages = [];
+  final List<ColoredMessage> _persistentMessages = [];
   String? _sudoPassword;
 
   @override
@@ -163,8 +181,8 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(height: 5),
+              Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 5),
               TextField(
                 controller: controller,
                 enabled: isEnabled,
@@ -179,13 +197,13 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
         ),
-        SizedBox(width: 10),
+        const SizedBox(width: 10),
         ElevatedButton(
           onPressed: isEnabled ? () => _selectFile(controller, prefKey) : null,
-          child: Text('Select'),
           style: ElevatedButton.styleFrom(
-            padding: EdgeInsets.symmetric(vertical: 15, horizontal: 15),
+            padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 15),
           ),
+          child: const Text('Select'),
         ),
       ],
     );
@@ -242,18 +260,18 @@ class _HomePageState extends State<HomePage> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: Text('Select a Drive'),
-              content: Container(
+              title: const Text('Select a Drive'),
+              content: SizedBox(
                 width: double.maxFinite,
                 child: FutureBuilder<List<Map<String, dynamic>>>(
                   future: _getDrives(showAllDrives),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
-                      return CircularProgressIndicator();
+                      return const CircularProgressIndicator();
                     } else if (snapshot.hasError) {
                       return Text('Error: ${snapshot.error}');
                     } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                      return Text('No drives found');
+                      return const Text('No drives found');
                     }
 
                     return Column(
@@ -269,18 +287,18 @@ class _HomePageState extends State<HomePage> {
                                 });
                               },
                             ),
-                            Text('Show all drives'),
+                            const Text('Show all drives'),
                           ],
                         ),
                         if (showAllDrives)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 8.0),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8.0),
                             child: Text(
                               'WARNING: Be careful not to select a system drive. All risk is on the user!',
                               style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
                             ),
                           ),
-                        SizedBox(height: 10),
+                        const SizedBox(height: 10),
                         Expanded(
                           child: ListView.builder(
                             shrinkWrap: true,
@@ -304,7 +322,7 @@ class _HomePageState extends State<HomePage> {
                                       onTap: () {
                                         Navigator.of(context).pop(drive['name']);
                                       },
-                                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                                     ),
                                   ),
                                   ...(drive['partitions'] as List<Map<String, dynamic>>).map<Widget>((partition) {
@@ -361,12 +379,12 @@ class _HomePageState extends State<HomePage> {
       barrierDismissible: false,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('Sudo Permissions Required'),
+          title: const Text('Sudo Permissions Required'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Please enter your sudo password to proceed with disk operations.'),
-              SizedBox(height: 16),
+              const Text('Please enter your sudo password to proceed with disk operations.'),
+              const SizedBox(height: 16),
               RawKeyboardListener(
                 focusNode: FocusNode(),
                 onKey: (RawKeyEvent event) {
@@ -382,7 +400,7 @@ class _HomePageState extends State<HomePage> {
                   controller: _sudoPasswordController,
                   obscureText: true,
                   autofocus: true,
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     labelText: 'Sudo Password',
                     border: OutlineInputBorder(),
                   ),
@@ -392,13 +410,13 @@ class _HomePageState extends State<HomePage> {
           ),
           actions: <Widget>[
             TextButton(
-              child: Text('Cancel'),
+              child: const Text('Cancel'),
               onPressed: () {
                 Navigator.of(context).pop(false);
               },
             ),
             ElevatedButton(
-              child: Text('Confirm'),
+              child: const Text('Confirm'),
               onPressed: () => _confirmSudoPassword(context),
             ),
           ],
@@ -418,7 +436,7 @@ class _HomePageState extends State<HomePage> {
       Navigator.of(context).pop(true);
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Incorrect sudo password. Please try again.', style: TextStyle(color: Colors.red))),
+        const SnackBar(content: Text('Incorrect sudo password. Please try again.', style: TextStyle(color: Colors.red))),
       );
     }
   }
@@ -503,7 +521,7 @@ class _HomePageState extends State<HomePage> {
   Future<bool> _repartitionDrive(String drive) async {
     try {
       // Unmount all partitions
-      await for (var output in _executeCommand('umount ${drive}*', requireSudo: true)) {
+      await for (var output in _executeCommand('umount $drive*', requireSudo: true)) {
         _showMessage(output, color: Colors.yellow);
       }
 
@@ -556,7 +574,7 @@ class _HomePageState extends State<HomePage> {
         if (_scrollController.hasClients) {
           _scrollController.animateTo(
             _scrollController.position.maxScrollExtent,
-            duration: Duration(milliseconds: 300),
+            duration: const Duration(milliseconds: 300),
             curve: Curves.easeOut,
           );
         }
@@ -607,17 +625,17 @@ class _HomePageState extends State<HomePage> {
         context: context,
         builder: (BuildContext context) {
           return AlertDialog(
-            title: Text('Repartition Required'),
-            content: Text('The selected drive does not meet the required partition structure. Do you want to repartition the drive? This will erase all data on the drive and format all partitions, including the user partition.'),
+            title: const Text('Repartition Required'),
+            content: const Text('The selected drive does not meet the required partition structure. Do you want to repartition the drive? This will erase all data on the drive and format all partitions, including the user partition.'),
             actions: <Widget>[
               TextButton(
-                child: Text('No'),
+                child: const Text('No'),
                 onPressed: () {
                   Navigator.of(context).pop(false);
                 },
               ),
               TextButton(
-                child: Text('Yes'),
+                child: const Text('Yes'),
                 onPressed: () {
                   Navigator.of(context).pop(true);
                 },
@@ -652,17 +670,17 @@ class _HomePageState extends State<HomePage> {
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('Confirmation'),
-          content: Text('Are you sure you want to write/modify the selected disk? This action cannot be undone.'),
+          title: const Text('Confirmation'),
+          content: const Text('Are you sure you want to write/modify the selected disk? This action cannot be undone.'),
           actions: <Widget>[
             TextButton(
-              child: Text('No'),
+              child: const Text('No'),
               onPressed: () {
                 Navigator.of(context).pop(false);
               },
             ),
             TextButton(
-              child: Text('Yes'),
+              child: const Text('Yes'),
               onPressed: () {
                 Navigator.of(context).pop(true);
               },
@@ -731,40 +749,40 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Android External Disk Imager'),
+        title: const Text('Android External Disk Imager'),
       ),
       body: SingleChildScrollView(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             minHeight: MediaQuery.of(context).size.height - 80, // Subtract AppBar height
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
                 ElevatedButton(
                   onPressed: _showDriveSelectionDialog,
-                  child: Text('Select Drive'),
                   style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 15),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
                   ),
+                  child: const Text('Select Drive'),
                 ),
-                SizedBox(height: 8),
+                const SizedBox(height: 8),
                 Text('Selected Drive: ${_selectedDrive ?? "None"}'),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
                 _buildImageField('Boot Image', _bootImageController, _isBootImageEnabled, (value) {
                   setState(() => _isBootImageEnabled = value!);
                 }, 'boot_image_path'),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
                 _buildImageField('System Image', _systemImageController, _isSystemImageEnabled, (value) {
                   setState(() => _isSystemImageEnabled = value!);
                 }, 'system_image_path'),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
                 _buildImageField('Vendor Image', _vendorImageController, _isVendorImageEnabled, (value) {
                   setState(() => _isVendorImageEnabled = value!);
                 }, 'vendor_image_path'),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
                 Row(
                   children: [
                     Checkbox(
@@ -776,27 +794,27 @@ class _HomePageState extends State<HomePage> {
                         });
                       },
                     ),
-                    Expanded(child: Text('Format user partition (if not repartitioning)')),
+                    const Expanded(child: Text('Format user partition (if not repartitioning)')),
                   ],
                 ),
-                Text('Note: User partition will always be formatted during repartitioning.'),
-                SizedBox(height: 16),
+                const Text('Note: User partition will always be formatted during repartitioning.'),
+                const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: _isBurnToDiskEnabled() ? _burnToDisk : null,
-                  child: _isOperationInProgress
-                      ? CircularProgressIndicator(color: Colors.white)
-                      : Text('Burn to disk'),
                   style: ElevatedButton.styleFrom(
-                    padding: EdgeInsets.symmetric(vertical: 15),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
                     backgroundColor: Colors.blue,
                     disabledBackgroundColor: Colors.grey,
                   ),
+                  child: _isOperationInProgress
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text('Burn to disk'),
                 ),
-                SizedBox(height: 16),
+                const SizedBox(height: 16),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Show persistent messages'),
+                    const Text('Show persistent messages'),
                     Switch(
                       value: _showPersistentMessages,
                       onChanged: (value) {
@@ -808,8 +826,8 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
                 if (_showPersistentMessages) ...[
-                  SizedBox(height: 16),
-                  Text('Messages:', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  const Text('Messages:', style: TextStyle(fontWeight: FontWeight.bold)),
                   Container(
                     height: 200,
                     decoration: BoxDecoration(
@@ -834,15 +852,15 @@ class _HomePageState extends State<HomePage> {
                       },
                     ),
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Align(
                     alignment: Alignment.centerRight,
                     child: ElevatedButton(
                       onPressed: _clearPersistentMessages,
-                      child: Text('Clear Messages'),
                       style: ElevatedButton.styleFrom(
-                        padding: EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+                        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 15),
                       ),
+                      child: const Text('Clear Messages'),
                     ),
                   ),
                 ],
