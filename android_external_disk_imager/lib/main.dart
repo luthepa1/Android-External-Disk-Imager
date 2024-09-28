@@ -655,104 +655,97 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: Text('Android External Disk Imager'),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ElevatedButton(
-                      onPressed: _showDriveSelectionDialog,
-                      child: Text('Select Drive'),
-                    ),
-                    SizedBox(height: 8),
-                    Text('Selected Drive: ${_selectedDrive ?? "None"}'),
-                    SizedBox(height: 16),
-                    _buildImageField('Boot Image', _bootImageController, _isBootImageEnabled, (value) {
-                      setState(() => _isBootImageEnabled = value!);
-                    }, 'boot_image_path'),
-                    SizedBox(height: 16),
-                    _buildImageField('System Image', _systemImageController, _isSystemImageEnabled, (value) {
-                      setState(() => _isSystemImageEnabled = value!);
-                    }, 'system_image_path'),
-                    SizedBox(height: 16),
-                    _buildImageField('Vendor Image', _vendorImageController, _isVendorImageEnabled, (value) {
-                      setState(() => _isVendorImageEnabled = value!);
-                    }, 'vendor_image_path'),
-                    SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: _formatUserPartition,
-                          onChanged: (value) {
-                            setState(() {
-                              _formatUserPartition = value!;
-                              _saveState('format_user_partition', value);
-                            });
-                          },
-                        ),
-                        Expanded(child: Text('Format user partition (if not repartitioning)')),
-                      ],
-                    ),
-                    Text('Note: User partition will always be formatted during repartitioning.'),
-                    SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: _isBurnToDiskEnabled() ? _burnToDisk : null,
-                      child: _isOperationInProgress
-                          ? CircularProgressIndicator(color: Colors.white)
-                          : Text('Burn to disk'),
-                    ),
-                    SizedBox(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Show persistent messages'),
-                        Switch(
-                          value: _showPersistentMessages,
-                          onChanged: (value) {
-                            setState(() {
-                              _showPersistentMessages = value;
-                              _saveState('show_persistent_messages', value);
-                            });
-                          },
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (_showPersistentMessages) ...[
-              SizedBox(height: 16),
-              Text('Messages:', style: TextStyle(fontWeight: FontWeight.bold)),
-              Container(
-                height: 200,
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: ListView.builder(
-                  controller: _scrollController,
-                  itemCount: _persistentMessages.length,
-                  itemBuilder: (context, index) {
-                    return Padding(
-                      padding: const EdgeInsets.all(4.0),
-                      child: Text(_persistentMessages[index]),
-                    );
-                  },
-                ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ElevatedButton(
+                onPressed: _showDriveSelectionDialog,
+                child: Text('Select Drive'),
               ),
               SizedBox(height: 8),
-              ElevatedButton(
-                onPressed: _clearPersistentMessages,
-                child: Text('Clear Messages'),
+              Text('Selected Drive: ${_selectedDrive ?? "None"}'),
+              SizedBox(height: 16),
+              _buildImageField('Boot Image', _bootImageController, _isBootImageEnabled, (value) {
+                setState(() => _isBootImageEnabled = value!);
+              }, 'boot_image_path'),
+              SizedBox(height: 16),
+              _buildImageField('System Image', _systemImageController, _isSystemImageEnabled, (value) {
+                setState(() => _isSystemImageEnabled = value!);
+              }, 'system_image_path'),
+              SizedBox(height: 16),
+              _buildImageField('Vendor Image', _vendorImageController, _isVendorImageEnabled, (value) {
+                setState(() => _isVendorImageEnabled = value!);
+              }, 'vendor_image_path'),
+              SizedBox(height: 16),
+              Row(
+                children: [
+                  Checkbox(
+                    value: _formatUserPartition,
+                    onChanged: (value) {
+                      setState(() {
+                        _formatUserPartition = value!;
+                        _saveState('format_user_partition', value);
+                      });
+                    },
+                  ),
+                  Expanded(child: Text('Format user partition (if not repartitioning)')),
+                ],
               ),
+              Text('Note: User partition will always be formatted during repartitioning.'),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _isBurnToDiskEnabled() ? _burnToDisk : null,
+                child: _isOperationInProgress
+                    ? CircularProgressIndicator(color: Colors.white)
+                    : Text('Burn to disk'),
+              ),
+              SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Show persistent messages'),
+                  Switch(
+                    value: _showPersistentMessages,
+                    onChanged: (value) {
+                      setState(() {
+                        _showPersistentMessages = value;
+                        _saveState('show_persistent_messages', value);
+                      });
+                    },
+                  ),
+                ],
+              ),
+              if (_showPersistentMessages) ...[
+                SizedBox(height: 16),
+                Text('Messages:', style: TextStyle(fontWeight: FontWeight.bold)),
+                Container(
+                  height: 200,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    itemCount: _persistentMessages.length,
+                    itemBuilder: (context, index) {
+                      return Padding(
+                        padding: const EdgeInsets.all(4.0),
+                        child: Text(_persistentMessages[index]),
+                      );
+                    },
+                  ),
+                ),
+                SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: _clearPersistentMessages,
+                  child: Text('Clear Messages'),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
