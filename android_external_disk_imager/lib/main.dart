@@ -38,14 +38,20 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _bootImageController = TextEditingController();
   final TextEditingController _systemImageController = TextEditingController();
   final TextEditingController _vendorImageController = TextEditingController();
+  final TextEditingController _sudoPasswordController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
 
   bool _isBootImageEnabled = true;
   bool _isSystemImageEnabled = true;
   bool _isVendorImageEnabled = true;
   bool _formatUserPartition = false;
+  bool _showPersistentMessages = false;
+  bool _isOperationInProgress = false;
 
   String? _lastKnownDirectory;
   String? _selectedDrive;
+  List<String> _persistentMessages = [];
+  String? _sudoPassword;
 
   @override
   void initState() {
@@ -59,6 +65,7 @@ class _HomePageState extends State<HomePage> {
     _isSystemImageEnabled = prefs.getBool('is_system_image_enabled') ?? true;
     _isVendorImageEnabled = prefs.getBool('is_vendor_image_enabled') ?? true;
     _formatUserPartition = prefs.getBool('format_user_partition') ?? false;
+    _showPersistentMessages = prefs.getBool('show_persistent_messages') ?? false;
     
     _loadTextField('boot_image_path', _bootImageController);
     _loadTextField('system_image_path', _systemImageController);
@@ -115,6 +122,7 @@ class _HomePageState extends State<HomePage> {
           onChanged: (bool? value) {
             onChanged(value);
             _saveState('is_${label.toLowerCase().replaceAll(' ', '_')}_enabled', value ?? false);
+            setState(() {}); // Trigger rebuild to update button state
           },
         ),
         Expanded(
@@ -128,7 +136,10 @@ class _HomePageState extends State<HomePage> {
                 decoration: InputDecoration(
                   border: OutlineInputBorder(),
                 ),
-                onChanged: (value) => _saveTextField(prefKey, value),
+                onChanged: (value) {
+                  _saveTextField(prefKey, value);
+                  setState(() {}); // Trigger rebuild to update button state
+                },
               ),
             ],
           ),
@@ -176,7 +187,7 @@ class _HomePageState extends State<HomePage> {
         };
       }).toList();
 
-      print('Parsed drives: $drives'); // Debug print
+      print('Parsed drives: $drives');
       return drives;
     } catch (e) {
       print('Exception in _getDrives: $e');
@@ -293,22 +304,95 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  Future<bool> _executeCommand(String command) async {
+  Future<bool> _requestSudoPermissions() async {
+    bool? result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Sudo Permissions Required'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Please enter your sudo password to proceed with disk operations.'),
+              SizedBox(height: 16),
+              TextField(
+                controller: _sudoPasswordController,
+                obscureText: true,
+                decoration: InputDecoration(
+                  labelText: 'Sudo Password',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: Text('Cancel'),
+              onPressed: () {
+                Navigator.of(context).pop(false);
+              },
+            ),
+            ElevatedButton(
+              child: Text('Confirm'),
+              onPressed: () {
+                _sudoPassword = _sudoPasswordController.text;
+                Navigator.of(context).pop(true);
+              },
+            ),
+          ],
+        );
+      },
+    );
+
+    _sudoPasswordController.clear();
+    return result ?? false;
+  }
+
+  Stream<String> _executeCommand(String command, {bool requireSudo = false}) async* {
+    if (requireSudo && _sudoPassword == null) {
+      throw Exception('Sudo password not provided for a command requiring sudo.');
+    }
+
+    print('Executing command: ${requireSudo ? "sudo " : ""}$command');
+    
+    late Process process;
     try {
-      print('Executing command: $command'); // Print command as informational message
-      final result = await Process.run('sh', ['-c', command]);
-      print('Exit code: ${result.exitCode}');
-      print('Stdout: ${result.stdout}');
-      print('Stderr: ${result.stderr}');
-      return result.exitCode == 0;
+      if (requireSudo) {
+        process = await Process.start('sudo', ['-S', 'sh', '-c', command]);
+        process.stdin.writeln(_sudoPassword);
+      } else {
+        process = await Process.start('sh', ['-c', command]);
+      }
+
+      await for (var event in process.stdout.transform(utf8.decoder)) {
+        yield event;
+      }
+
+      await for (var event in process.stderr.transform(utf8.decoder)) {
+        yield event;
+      }
+
+      final exitCode = await process.exitCode;
+      yield 'Exit code: $exitCode';
     } catch (e) {
-      print('Error executing command: $e');
-      return false;
+      yield 'Error executing command: $e';
     }
   }
 
   Future<bool> _checkDrivePartitions(String drive) async {
     try {
+      bool isValid = true;
+      await for (var output in _executeCommand('lsblk -nJo NAME,SIZE,FSTYPE,LABEL $drive')) {
+        if (output.contains('Error')) {
+          print('Error checking drive partitions: $output');
+          isValid = false;
+          break;
+        }
+      }
+
+      if (!isValid) return false;
+
       final result = await Process.run('lsblk', ['-nJo', 'NAME,SIZE,FSTYPE,LABEL', drive]);
       if (result.exitCode != 0) {
         print('Error checking drive partitions: ${result.stderr}');
@@ -345,22 +429,42 @@ class _HomePageState extends State<HomePage> {
   Future<bool> _repartitionDrive(String drive) async {
     try {
       // Unmount all partitions
-      await _executeCommand('umount ${drive}*');
+      await for (var output in _executeCommand('umount ${drive}*', requireSudo: true)) {
+        _showMessage(output);
+      }
 
       // Create new partition table
-      await _executeCommand('parted -s $drive mklabel gpt');
+      await for (var output in _executeCommand('parted -s $drive mklabel gpt', requireSudo: true)) {
+        _showMessage(output);
+      }
 
       // Create partitions
-      await _executeCommand('parted -s $drive mkpart primary fat32 1MiB 129MiB');
-      await _executeCommand('parted -s $drive mkpart primary ext4 129MiB 2177MiB');
-      await _executeCommand('parted -s $drive mkpart primary ext4 2177MiB 2433MiB');
-      await _executeCommand('parted -s $drive mkpart primary ext4 2433MiB 100%');
+      await for (var output in _executeCommand('parted -s $drive mkpart primary fat32 1MiB 129MiB', requireSudo: true)) {
+        _showMessage(output);
+      }
+      await for (var output in _executeCommand('parted -s $drive mkpart primary ext4 129MiB 2177MiB', requireSudo: true)) {
+        _showMessage(output);
+      }
+      await for (var output in _executeCommand('parted -s $drive mkpart primary ext4 2177MiB 2433MiB', requireSudo: true)) {
+        _showMessage(output);
+      }
+      await for (var output in _executeCommand('parted -s $drive mkpart primary ext4 2433MiB 100%', requireSudo: true)) {
+        _showMessage(output);
+      }
 
       // Format partitions
-      await _executeCommand('mkfs.vfat -n "boot" ${drive}1');
-      await _executeCommand('mkfs.ext4 -L "/" ${drive}2');
-      await _executeCommand('mkfs.ext4 -L "vendor" ${drive}3');
-      await _executeCommand('mkfs.ext4 -F -L "userdata" ${drive}4');
+      await for (var output in _executeCommand('mkfs.vfat -n "boot" ${drive}1', requireSudo: true)) {
+        _showMessage(output);
+      }
+      await for (var output in _executeCommand('mkfs.ext4 -L "/" ${drive}2', requireSudo: true)) {
+        _showMessage(output);
+      }
+      await for (var output in _executeCommand('mkfs.ext4 -L "vendor" ${drive}3', requireSudo: true)) {
+        _showMessage(output);
+      }
+      await for (var output in _executeCommand('mkfs.ext4 -F -L "userdata" ${drive}4', requireSudo: true)) {
+        _showMessage(output);
+      }
 
       return true;
     } catch (e) {
@@ -369,14 +473,60 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _burnToDisk() async {
-    if (_selectedDrive == null) {
+  void _showMessage(String message) {
+    setState(() {
+      _persistentMessages.add(message);
+    });
+    if (_showPersistentMessages) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent,
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please select a drive first.')),
+        SnackBar(content: Text(message)),
       );
+    }
+  }
+
+  void _clearPersistentMessages() {
+    setState(() {
+      _persistentMessages.clear();
+    });
+  }
+
+  bool _isBurnToDiskEnabled() {
+    bool atLeastOneImageSelected = (_isBootImageEnabled && _bootImageController.text.isNotEmpty) ||
+                                   (_isSystemImageEnabled && _systemImageController.text.isNotEmpty) ||
+                                   (_isVendorImageEnabled && _vendorImageController.text.isNotEmpty);
+    return _selectedDrive != null && atLeastOneImageSelected && !_isOperationInProgress;
+  }
+
+  void _burnToDisk() async {
+    if (!_isBurnToDiskEnabled()) {
+      _showMessage('Please select a drive and at least one image to burn.');
       return;
     }
 
+    setState(() {
+      _isOperationInProgress = true;
+    });
+
+    bool sudoGranted = await _requestSudoPermissions();
+    if (!sudoGranted) {
+      _showMessage('Sudo permissions are required to perform disk operations.');
+      setState(() {
+        _isOperationInProgress = false;
+      });
+      return;
+    }
+
+    _showMessage('Checking drive partitions...');
     bool partitionsOk = await _checkDrivePartitions(_selectedDrive!);
     if (!partitionsOk) {
       bool confirmRepartition = await showDialog(
@@ -404,18 +554,22 @@ class _HomePageState extends State<HomePage> {
       );
 
       if (confirmRepartition) {
+        _showMessage('Repartitioning drive...');
         bool repartitionSuccess = await _repartitionDrive(_selectedDrive!);
         if (!repartitionSuccess) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to repartition the drive. Please try again.')),
-          );
+          _showMessage('Failed to repartition the drive. Please try again.');
+          setState(() {
+            _isOperationInProgress = false;
+          });
           return;
         }
-        partitionsOk = true; // Set to true as we've just repartitioned
+        _showMessage('Drive repartitioned successfully.');
+        partitionsOk = true;
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Cannot proceed without proper partition structure.')),
-        );
+        _showMessage('Cannot proceed without proper partition structure.');
+        setState(() {
+          _isOperationInProgress = false;
+        });
         return;
       }
     }
@@ -445,32 +599,54 @@ class _HomePageState extends State<HomePage> {
     );
 
     if (confirm) {
-      List<String> messages = [];
-
-      if (_isBootImageEnabled) {
-        bool success = await _executeCommand('dd if=${_bootImageController.text} of=${_selectedDrive}1 bs=4M');
-        messages.add('Writing boot image to partition 1: ${success ? 'Success' : 'Failed'}');
+      if (_isBootImageEnabled && _bootImageController.text.isNotEmpty) {
+        _showMessage('Writing boot image to partition 1...');
+        await for (var output in _executeCommand(
+          'dd if=${_bootImageController.text} of=${_selectedDrive}1 bs=4M status=progress',
+          requireSudo: true,
+        )) {
+          _showMessage(output);
+        }
       }
 
-      if (_isSystemImageEnabled) {
-        bool success = await _executeCommand('dd if=${_systemImageController.text} of=${_selectedDrive}2 bs=4M');
-        messages.add('Writing system image to partition 2: ${success ? 'Success' : 'Failed'}');
+      if (_isSystemImageEnabled && _systemImageController.text.isNotEmpty) {
+        _showMessage('Writing system image to partition 2...');
+        await for (var output in _executeCommand(
+          'dd if=${_systemImageController.text} of=${_selectedDrive}2 bs=4M status=progress',
+          requireSudo: true,
+        )) {
+          _showMessage(output);
+        }
       }
 
-      if (_isVendorImageEnabled) {
-        bool success = await _executeCommand('dd if=${_vendorImageController.text} of=${_selectedDrive}3 bs=4M');
-        messages.add('Writing vendor image to partition 3: ${success ? 'Success' : 'Failed'}');
+      if (_isVendorImageEnabled && _vendorImageController.text.isNotEmpty) {
+        _showMessage('Writing vendor image to partition 3...');
+        await for (var output in _executeCommand(
+          'dd if=${_vendorImageController.text} of=${_selectedDrive}3 bs=4M status=progress',
+          requireSudo: true,
+        )) {
+          _showMessage(output);
+        }
       }
       
       if (_formatUserPartition && !partitionsOk) {
-        bool success = await _executeCommand('mkfs.ext4 -F -L "userdata" ${_selectedDrive}4');
-        messages.add('Formatting user partition 4: ${success ? 'Success' : 'Failed'}');
+        _showMessage('Formatting user partition 4...');
+        await for (var output in _executeCommand(
+          'mkfs.ext4 -F -L "userdata" ${_selectedDrive}4',
+          requireSudo: true,
+        )) {
+          _showMessage(output);
+        }
       }
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(messages.join('\n'))),
-      );
+      _showMessage('All operations completed.');
     }
+
+    // Clear sudo password after operations are complete
+    _sudoPassword = null;
+    setState(() {
+      _isOperationInProgress = false;
+    });
   }
 
   @override
@@ -482,50 +658,100 @@ class _HomePageState extends State<HomePage> {
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            ElevatedButton(
-              onPressed: _showDriveSelectionDialog,
-              child: Text('Select Drive'),
-            ),
-            SizedBox(height: 8),
-            Text('Selected Drive: ${_selectedDrive ?? "None"}'),
-            SizedBox(height: 16),
-            _buildImageField('Boot Image', _bootImageController, _isBootImageEnabled, (value) {
-              setState(() => _isBootImageEnabled = value!);
-            }, 'boot_image_path'),
-            SizedBox(height: 16),
-            _buildImageField('System Image', _systemImageController, _isSystemImageEnabled, (value) {
-              setState(() => _isSystemImageEnabled = value!);
-            }, 'system_image_path'),
-            SizedBox(height: 16),
-            _buildImageField('Vendor Image', _vendorImageController, _isVendorImageEnabled, (value) {
-              setState(() => _isVendorImageEnabled = value!);
-            }, 'vendor_image_path'),
-            SizedBox(height: 16),
-            Row(
-              children: [
-                Checkbox(
-                  value: _formatUserPartition,
-                  onChanged: (value) {
-                    setState(() {
-                      _formatUserPartition = value!;
-                      _saveState('format_user_partition', value);
-                    });
-                  },
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ElevatedButton(
+                      onPressed: _showDriveSelectionDialog,
+                      child: Text('Select Drive'),
+                    ),
+                    SizedBox(height: 8),
+                    Text('Selected Drive: ${_selectedDrive ?? "None"}'),
+                    SizedBox(height: 16),
+                    _buildImageField('Boot Image', _bootImageController, _isBootImageEnabled, (value) {
+                      setState(() => _isBootImageEnabled = value!);
+                    }, 'boot_image_path'),
+                    SizedBox(height: 16),
+                    _buildImageField('System Image', _systemImageController, _isSystemImageEnabled, (value) {
+                      setState(() => _isSystemImageEnabled = value!);
+                    }, 'system_image_path'),
+                    SizedBox(height: 16),
+                    _buildImageField('Vendor Image', _vendorImageController, _isVendorImageEnabled, (value) {
+                      setState(() => _isVendorImageEnabled = value!);
+                    }, 'vendor_image_path'),
+                    SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _formatUserPartition,
+                          onChanged: (value) {
+                            setState(() {
+                              _formatUserPartition = value!;
+                              _saveState('format_user_partition', value);
+                            });
+                          },
+                        ),
+                        Expanded(child: Text('Format user partition (if not repartitioning)')),
+                      ],
+                    ),
+                    Text('Note: User partition will always be formatted during repartitioning.'),
+                    SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _isBurnToDiskEnabled() ? _burnToDisk : null,
+                      child: _isOperationInProgress
+                          ? CircularProgressIndicator(color: Colors.white)
+                          : Text('Burn to disk'),
+                    ),
+                    SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text('Show persistent messages'),
+                        Switch(
+                          value: _showPersistentMessages,
+                          onChanged: (value) {
+                            setState(() {
+                              _showPersistentMessages = value;
+                              _saveState('show_persistent_messages', value);
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                Text('Format user partition (if not repartitioning)'),
-              ],
-            ),
-            Text('Note: User partition will always be formatted during repartitioning.'),
-            Spacer(),
-            Align(
-              alignment: Alignment.bottomRight,
-              child: ElevatedButton(
-                onPressed: _selectedDrive != null ? _burnToDisk : null,
-                child: Text('Burn to disk'),
               ),
             ),
+            if (_showPersistentMessages) ...[
+              SizedBox(height: 16),
+              Text('Messages:', style: TextStyle(fontWeight: FontWeight.bold)),
+              Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: ListView.builder(
+                  controller: _scrollController,
+                  itemCount: _persistentMessages.length,
+                  itemBuilder: (context, index) {
+                    return Padding(
+                      padding: const EdgeInsets.all(4.0),
+                      child: Text(_persistentMessages[index]),
+                    );
+                  },
+                ),
+              ),
+              SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: _clearPersistentMessages,
+                child: Text('Clear Messages'),
+              ),
+            ],
           ],
         ),
       ),
