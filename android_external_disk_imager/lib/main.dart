@@ -42,7 +42,7 @@ class _HomePageState extends State<HomePage> {
   bool _isBootImageEnabled = true;
   bool _isSystemImageEnabled = true;
   bool _isVendorImageEnabled = true;
-  bool _createUserPartition = false;
+  bool _formatUserPartition = false;
 
   String? _lastKnownDirectory;
   String? _selectedDrive;
@@ -58,6 +58,7 @@ class _HomePageState extends State<HomePage> {
     _isBootImageEnabled = prefs.getBool('is_boot_image_enabled') ?? true;
     _isSystemImageEnabled = prefs.getBool('is_system_image_enabled') ?? true;
     _isVendorImageEnabled = prefs.getBool('is_vendor_image_enabled') ?? true;
+    _formatUserPartition = prefs.getBool('format_user_partition') ?? false;
     
     _loadTextField('boot_image_path', _bootImageController);
     _loadTextField('system_image_path', _systemImageController);
@@ -294,8 +295,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<bool> _executeCommand(String command) async {
     try {
+      print('Executing command: $command'); // Print command as informational message
       final result = await Process.run('sh', ['-c', command]);
-      print('Command: $command');
       print('Exit code: ${result.exitCode}');
       print('Stdout: ${result.stdout}');
       print('Stderr: ${result.stderr}');
@@ -306,12 +307,117 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<bool> _checkDrivePartitions(String drive) async {
+    try {
+      final result = await Process.run('lsblk', ['-nJo', 'NAME,SIZE,FSTYPE,LABEL', drive]);
+      if (result.exitCode != 0) {
+        print('Error checking drive partitions: ${result.stderr}');
+        return false;
+      }
+
+      final Map<String, dynamic> driveInfo = json.decode(result.stdout);
+      final List<dynamic> partitions = driveInfo['blockdevices'][0]['children'] ?? [];
+
+      if (partitions.length != 4) return false;
+
+      final bootPartition = partitions[0];
+      final systemPartition = partitions[1];
+      final vendorPartition = partitions[2];
+      final userDataPartition = partitions[3];
+
+      return bootPartition['size'] == '128M' &&
+             bootPartition['fstype'] == 'vfat' &&
+             bootPartition['label'] == 'boot' &&
+             systemPartition['size'] == '2G' &&
+             systemPartition['fstype'] == 'ext4' &&
+             systemPartition['label'] == '/' &&
+             vendorPartition['size'] == '256M' &&
+             vendorPartition['fstype'] == 'ext4' &&
+             vendorPartition['label'] == 'vendor' &&
+             userDataPartition['fstype'] == 'ext4' &&
+             userDataPartition['label'] == 'userdata';
+    } catch (e) {
+      print('Exception in _checkDrivePartitions: $e');
+      return false;
+    }
+  }
+
+  Future<bool> _repartitionDrive(String drive) async {
+    try {
+      // Unmount all partitions
+      await _executeCommand('umount ${drive}*');
+
+      // Create new partition table
+      await _executeCommand('parted -s $drive mklabel gpt');
+
+      // Create partitions
+      await _executeCommand('parted -s $drive mkpart primary fat32 1MiB 129MiB');
+      await _executeCommand('parted -s $drive mkpart primary ext4 129MiB 2177MiB');
+      await _executeCommand('parted -s $drive mkpart primary ext4 2177MiB 2433MiB');
+      await _executeCommand('parted -s $drive mkpart primary ext4 2433MiB 100%');
+
+      // Format partitions
+      await _executeCommand('mkfs.vfat -n "boot" ${drive}1');
+      await _executeCommand('mkfs.ext4 -L "/" ${drive}2');
+      await _executeCommand('mkfs.ext4 -L "vendor" ${drive}3');
+      await _executeCommand('mkfs.ext4 -F -L "userdata" ${drive}4');
+
+      return true;
+    } catch (e) {
+      print('Error repartitioning drive: $e');
+      return false;
+    }
+  }
+
   void _burnToDisk() async {
     if (_selectedDrive == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Please select a drive first.')),
       );
       return;
+    }
+
+    bool partitionsOk = await _checkDrivePartitions(_selectedDrive!);
+    if (!partitionsOk) {
+      bool confirmRepartition = await showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Repartition Required'),
+            content: Text('The selected drive does not meet the required partition structure. Do you want to repartition the drive? This will erase all data on the drive and format all partitions, including the user partition.'),
+            actions: <Widget>[
+              TextButton(
+                child: Text('No'),
+                onPressed: () {
+                  Navigator.of(context).pop(false);
+                },
+              ),
+              TextButton(
+                child: Text('Yes'),
+                onPressed: () {
+                  Navigator.of(context).pop(true);
+                },
+              ),
+            ],
+          );
+        },
+      );
+
+      if (confirmRepartition) {
+        bool repartitionSuccess = await _repartitionDrive(_selectedDrive!);
+        if (!repartitionSuccess) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to repartition the drive. Please try again.')),
+          );
+          return;
+        }
+        partitionsOk = true; // Set to true as we've just repartitioned
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cannot proceed without proper partition structure.')),
+        );
+        return;
+      }
     }
 
     bool confirm = await showDialog(
@@ -342,24 +448,23 @@ class _HomePageState extends State<HomePage> {
       List<String> messages = [];
 
       if (_isBootImageEnabled) {
-        bool success = await _executeCommand('dd if=${_bootImageController.text} of=$_selectedDrive bs=4M');
-        messages.add('Writing boot image: ${success ? 'Success' : 'Failed'}');
+        bool success = await _executeCommand('dd if=${_bootImageController.text} of=${_selectedDrive}1 bs=4M');
+        messages.add('Writing boot image to partition 1: ${success ? 'Success' : 'Failed'}');
       }
 
       if (_isSystemImageEnabled) {
-        bool success = await _executeCommand('dd if=${_systemImageController.text} of=$_selectedDrive bs=4M');
-        messages.add('Writing system image: ${success ? 'Success' : 'Failed'}');
+        bool success = await _executeCommand('dd if=${_systemImageController.text} of=${_selectedDrive}2 bs=4M');
+        messages.add('Writing system image to partition 2: ${success ? 'Success' : 'Failed'}');
       }
 
       if (_isVendorImageEnabled) {
-        bool success = await _executeCommand('dd if=${_vendorImageController.text} of=$_selectedDrive bs=4M');
-        messages.add('Writing vendor image: ${success ? 'Success' : 'Failed'}');
+        bool success = await _executeCommand('dd if=${_vendorImageController.text} of=${_selectedDrive}3 bs=4M');
+        messages.add('Writing vendor image to partition 3: ${success ? 'Success' : 'Failed'}');
       }
-
-      if (_createUserPartition) {
-        // This is a placeholder command. Replace with actual command to create a user partition
-        bool success = await _executeCommand('parted $_selectedDrive mkpart primary ext4 100% 100%');
-        messages.add('Creating user partition: ${success ? 'Success' : 'Failed'}');
+      
+      if (_formatUserPartition && !partitionsOk) {
+        bool success = await _executeCommand('mkfs.ext4 -F -L "userdata" ${_selectedDrive}4');
+        messages.add('Formatting user partition 4: ${success ? 'Success' : 'Failed'}');
       }
       
       ScaffoldMessenger.of(context).showSnackBar(
@@ -401,14 +506,18 @@ class _HomePageState extends State<HomePage> {
             Row(
               children: [
                 Checkbox(
-                  value: _createUserPartition,
+                  value: _formatUserPartition,
                   onChanged: (value) {
-                    setState(() => _createUserPartition = value!);
+                    setState(() {
+                      _formatUserPartition = value!;
+                      _saveState('format_user_partition', value);
+                    });
                   },
                 ),
-                Text('Create user partition?'),
+                Text('Format user partition (if not repartitioning)'),
               ],
             ),
+            Text('Note: User partition will always be formatted during repartitioning.'),
             Spacer(),
             Align(
               alignment: Alignment.bottomRight,
