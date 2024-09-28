@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:io';
@@ -21,6 +22,24 @@ class MyApp extends StatelessWidget {
       title: 'Android External Disk Imager',
       theme: ThemeData(
         primarySwatch: Colors.blue,
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(vertical: 15, horizontal: 20),
+            textStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            elevation: 5,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: OutlineInputBorder(),
+          filled: true,
+          fillColor: Colors.grey[200],
+          contentPadding: EdgeInsets.symmetric(vertical: 15, horizontal: 15),
+        ),
       ),
       home: LayoutBuilder(
         builder: (context, constraints) {
@@ -33,6 +52,13 @@ class MyApp extends StatelessWidget {
       ),
     );
   }
+}
+
+class ColoredMessage {
+  final String text;
+  final Color color;
+
+  ColoredMessage(this.text, this.color);
 }
 
 class HomePage extends StatefulWidget {
@@ -58,7 +84,7 @@ class _HomePageState extends State<HomePage> {
 
   String? _lastKnownDirectory;
   String? _selectedDrive;
-  List<String> _persistentMessages = [];
+  List<ColoredMessage> _persistentMessages = [];
   String? _sudoPassword;
 
   @override
@@ -73,7 +99,6 @@ class _HomePageState extends State<HomePage> {
     _isSystemImageEnabled = prefs.getBool('is_system_image_enabled') ?? true;
     _isVendorImageEnabled = prefs.getBool('is_vendor_image_enabled') ?? true;
     _formatUserPartition = prefs.getBool('format_user_partition') ?? false;
-    // Removed loading of _showPersistentMessages
     
     _loadTextField('boot_image_path', _bootImageController);
     _loadTextField('system_image_path', _systemImageController);
@@ -124,6 +149,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildImageField(String label, TextEditingController controller, bool isEnabled, Function(bool?) onChanged, String prefKey) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Checkbox(
           value: isEnabled,
@@ -137,12 +163,13 @@ class _HomePageState extends State<HomePage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label),
+              Text(label, style: TextStyle(fontWeight: FontWeight.bold)),
+              SizedBox(height: 5),
               TextField(
                 controller: controller,
                 enabled: isEnabled,
                 decoration: InputDecoration(
-                  border: OutlineInputBorder(),
+                  hintText: 'Select ${label.toLowerCase()} file',
                 ),
                 onChanged: (value) {
                   _saveTextField(prefKey, value);
@@ -152,9 +179,13 @@ class _HomePageState extends State<HomePage> {
             ],
           ),
         ),
+        SizedBox(width: 10),
         ElevatedButton(
           onPressed: isEnabled ? () => _selectFile(controller, prefKey) : null,
           child: Text('Select'),
+          style: ElevatedButton.styleFrom(
+            padding: EdgeInsets.symmetric(vertical: 15, horizontal: 15),
+          ),
         ),
       ],
     );
@@ -312,6 +343,18 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  Future<bool> _verifySudoPassword(String password) async {
+    try {
+      final process = await Process.start('sudo', ['-S', 'true']);
+      process.stdin.writeln(password);
+      final exitCode = await process.exitCode;
+      return exitCode == 0;
+    } catch (e) {
+      print('Error verifying sudo password: $e');
+      return false;
+    }
+  }
+
   Future<bool> _requestSudoPermissions() async {
     bool? result = await showDialog<bool>(
       context: context,
@@ -324,12 +367,25 @@ class _HomePageState extends State<HomePage> {
             children: [
               Text('Please enter your sudo password to proceed with disk operations.'),
               SizedBox(height: 16),
-              TextField(
-                controller: _sudoPasswordController,
-                obscureText: true,
-                decoration: InputDecoration(
-                  labelText: 'Sudo Password',
-                  border: OutlineInputBorder(),
+              RawKeyboardListener(
+                focusNode: FocusNode(),
+                onKey: (RawKeyEvent event) {
+                  if (event is RawKeyDownEvent) {
+                    if (event.logicalKey == LogicalKeyboardKey.enter) {
+                      _confirmSudoPassword(context);
+                    } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+                      Navigator.of(context).pop(false);
+                    }
+                  }
+                },
+                child: TextField(
+                  controller: _sudoPasswordController,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Sudo Password',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
               ),
             ],
@@ -343,10 +399,7 @@ class _HomePageState extends State<HomePage> {
             ),
             ElevatedButton(
               child: Text('Confirm'),
-              onPressed: () {
-                _sudoPassword = _sudoPasswordController.text;
-                Navigator.of(context).pop(true);
-              },
+              onPressed: () => _confirmSudoPassword(context),
             ),
           ],
         );
@@ -355,6 +408,19 @@ class _HomePageState extends State<HomePage> {
 
     _sudoPasswordController.clear();
     return result ?? false;
+  }
+
+  void _confirmSudoPassword(BuildContext context) async {
+    String password = _sudoPasswordController.text;
+    bool isValid = await _verifySudoPassword(password);
+    if (isValid) {
+      _sudoPassword = password;
+      Navigator.of(context).pop(true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Incorrect sudo password. Please try again.', style: TextStyle(color: Colors.red))),
+      );
+    }
   }
 
   Stream<String> _executeCommand(String command, {bool requireSudo = false}) async* {
@@ -438,40 +504,40 @@ class _HomePageState extends State<HomePage> {
     try {
       // Unmount all partitions
       await for (var output in _executeCommand('umount ${drive}*', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
 
       // Create new partition table
       await for (var output in _executeCommand('parted -s $drive mklabel gpt', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
 
       // Create partitions
       await for (var output in _executeCommand('parted -s $drive mkpart primary fat32 1MiB 129MiB', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
       await for (var output in _executeCommand('parted -s $drive mkpart primary ext4 129MiB 2177MiB', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
       await for (var output in _executeCommand('parted -s $drive mkpart primary ext4 2177MiB 2433MiB', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
       await for (var output in _executeCommand('parted -s $drive mkpart primary ext4 2433MiB 100%', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
 
       // Format partitions
       await for (var output in _executeCommand('mkfs.vfat -n "boot" ${drive}1', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
       await for (var output in _executeCommand('mkfs.ext4 -L "/" ${drive}2', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
       await for (var output in _executeCommand('mkfs.ext4 -L "vendor" ${drive}3', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
       await for (var output in _executeCommand('mkfs.ext4 -F -L "userdata" ${drive}4', requireSudo: true)) {
-        _showMessage(output);
+        _showMessage(output, color: Colors.yellow);
       }
 
       return true;
@@ -481,9 +547,9 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  void _showMessage(String message) {
+  void _showMessage(String message, {Color color = Colors.black}) {
     setState(() {
-      _persistentMessages.add(message);
+      _persistentMessages.add(ColoredMessage(message, color));
     });
     if (_showPersistentMessages) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -497,7 +563,7 @@ class _HomePageState extends State<HomePage> {
       });
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message)),
+        SnackBar(content: Text(message, style: TextStyle(color: color))),
       );
     }
   }
@@ -517,7 +583,7 @@ class _HomePageState extends State<HomePage> {
 
   void _burnToDisk() async {
     if (!_isBurnToDiskEnabled()) {
-      _showMessage('Please select a drive and at least one image to burn.');
+      _showMessage('Please select a drive and at least one image to burn.', color: Colors.red);
       return;
     }
 
@@ -527,14 +593,14 @@ class _HomePageState extends State<HomePage> {
 
     bool sudoGranted = await _requestSudoPermissions();
     if (!sudoGranted) {
-      _showMessage('Sudo permissions are required to perform disk operations.');
+      _showMessage('Sudo permissions are required to perform disk operations.', color: Colors.red);
       setState(() {
         _isOperationInProgress = false;
       });
       return;
     }
 
-    _showMessage('Checking drive partitions...');
+    _showMessage('Checking drive partitions...', color: Colors.yellow);
     bool partitionsOk = await _checkDrivePartitions(_selectedDrive!);
     if (!partitionsOk) {
       bool confirmRepartition = await showDialog(
@@ -562,19 +628,19 @@ class _HomePageState extends State<HomePage> {
       );
 
       if (confirmRepartition) {
-        _showMessage('Repartitioning drive...');
+        _showMessage('Repartitioning drive...', color: Colors.yellow);
         bool repartitionSuccess = await _repartitionDrive(_selectedDrive!);
         if (!repartitionSuccess) {
-          _showMessage('Failed to repartition the drive. Please try again.');
+          _showMessage('Failed to repartition the drive. Please try again.', color: Colors.red);
           setState(() {
             _isOperationInProgress = false;
           });
           return;
         }
-        _showMessage('Drive repartitioned successfully.');
+        _showMessage('Drive repartitioned successfully.', color: Colors.green);
         partitionsOk = true;
       } else {
-        _showMessage('Cannot proceed without proper partition structure.');
+        _showMessage('Cannot proceed without proper partition structure.', color: Colors.red);
         setState(() {
           _isOperationInProgress = false;
         });
@@ -608,46 +674,50 @@ class _HomePageState extends State<HomePage> {
 
     if (confirm) {
       if (_isBootImageEnabled && _bootImageController.text.isNotEmpty) {
-        _showMessage('Writing boot image to partition 1...');
+        _showMessage('Writing boot image to partition 1...', color: Colors.yellow);
         await for (var output in _executeCommand(
           'dd if=${_bootImageController.text} of=${_selectedDrive}1 bs=4M status=progress',
           requireSudo: true,
         )) {
-          _showMessage(output);
+          _showMessage(output, color: Colors.yellow);
         }
+        _showMessage('Boot image written successfully.', color: Colors.green);
       }
 
       if (_isSystemImageEnabled && _systemImageController.text.isNotEmpty) {
-        _showMessage('Writing system image to partition 2...');
+        _showMessage('Writing system image to partition 2...', color: Colors.yellow);
         await for (var output in _executeCommand(
           'dd if=${_systemImageController.text} of=${_selectedDrive}2 bs=4M status=progress',
           requireSudo: true,
         )) {
-          _showMessage(output);
+          _showMessage(output, color: Colors.yellow);
         }
+        _showMessage('System image written successfully.', color: Colors.green);
       }
 
       if (_isVendorImageEnabled && _vendorImageController.text.isNotEmpty) {
-        _showMessage('Writing vendor image to partition 3...');
+        _showMessage('Writing vendor image to partition 3...', color: Colors.yellow);
         await for (var output in _executeCommand(
           'dd if=${_vendorImageController.text} of=${_selectedDrive}3 bs=4M status=progress',
           requireSudo: true,
         )) {
-          _showMessage(output);
+          _showMessage(output, color: Colors.yellow);
         }
+        _showMessage('Vendor image written successfully.', color: Colors.green);
       }
       
       if (_formatUserPartition && !partitionsOk) {
-        _showMessage('Formatting user partition 4...');
+        _showMessage('Formatting user partition 4...', color: Colors.yellow);
         await for (var output in _executeCommand(
           'mkfs.ext4 -F -L "userdata" ${_selectedDrive}4',
           requireSudo: true,
         )) {
-          _showMessage(output);
+          _showMessage(output, color: Colors.yellow);
         }
+        _showMessage('User partition formatted successfully.', color: Colors.green);
       }
       
-      _showMessage('All operations completed.');
+      _showMessage('All operations completed successfully.', color: Colors.green);
     }
 
     // Clear sudo password after operations are complete
@@ -676,6 +746,9 @@ class _HomePageState extends State<HomePage> {
                 ElevatedButton(
                   onPressed: _showDriveSelectionDialog,
                   child: Text('Select Drive'),
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 15),
+                  ),
                 ),
                 SizedBox(height: 8),
                 Text('Selected Drive: ${_selectedDrive ?? "None"}'),
@@ -713,6 +786,11 @@ class _HomePageState extends State<HomePage> {
                   child: _isOperationInProgress
                       ? CircularProgressIndicator(color: Colors.white)
                       : Text('Burn to disk'),
+                  style: ElevatedButton.styleFrom(
+                    padding: EdgeInsets.symmetric(vertical: 15),
+                    backgroundColor: Colors.blue,
+                    disabledBackgroundColor: Colors.grey,
+                  ),
                 ),
                 SizedBox(height: 16),
                 Row(
@@ -724,7 +802,6 @@ class _HomePageState extends State<HomePage> {
                       onChanged: (value) {
                         setState(() {
                           _showPersistentMessages = value;
-                          // Removed saving of _showPersistentMessages
                         });
                       },
                     ),
@@ -736,6 +813,7 @@ class _HomePageState extends State<HomePage> {
                   Container(
                     height: 200,
                     decoration: BoxDecoration(
+                      color: Colors.grey[850], // Dark background for better contrast
                       border: Border.all(color: Colors.grey),
                       borderRadius: BorderRadius.circular(4),
                     ),
@@ -745,15 +823,27 @@ class _HomePageState extends State<HomePage> {
                       itemBuilder: (context, index) {
                         return Padding(
                           padding: const EdgeInsets.all(4.0),
-                          child: Text(_persistentMessages[index]),
+                          child: Text(
+                            _persistentMessages[index].text,
+                            style: TextStyle(
+                              color: _persistentMessages[index].color,
+                              fontWeight: FontWeight.bold, // Make text bold for better visibility
+                            ),
+                          ),
                         );
                       },
                     ),
                   ),
                   SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: _clearPersistentMessages,
-                    child: Text('Clear Messages'),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: ElevatedButton(
+                      onPressed: _clearPersistentMessages,
+                      child: Text('Clear Messages'),
+                      style: ElevatedButton.styleFrom(
+                        padding: EdgeInsets.symmetric(vertical: 10, horizontal: 15),
+                      ),
+                    ),
                   ),
                 ],
               ],
